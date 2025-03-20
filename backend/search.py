@@ -6,16 +6,31 @@ from dotenv import load_dotenv
 from pathlib import Path
 import asyncio
 from pinecone.openapi_support.exceptions import ServiceException
+import logging
 
 # Load .env.local from project root
 root_dir = Path(__file__).parent.parent
 env_path = root_dir / '.env.local'
 load_dotenv(dotenv_path=env_path)
 
+logger = logging.getLogger(__name__)
+
 class SearchClient:
     def __init__(self):
-        self.pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-        self.index = self.pc.Index(os.getenv("PINECONE_INDEX_NAME"))
+        logger.info("Initializing SearchClient")
+        api_key = os.getenv("PINECONE_API_KEY")
+        index_name = os.getenv("PINECONE_INDEX_NAME")
+        environment = os.getenv("PINECONE_ENVIRONMENT")
+        
+        logger.info(f"Using Pinecone index: {index_name}")
+        logger.info(f"Using environment: {environment}")
+        
+        if not all([api_key, index_name, environment]):
+            raise ValueError("Missing required Pinecone configuration")
+        
+        self.pc = Pinecone(api_key=api_key)
+        # Create index with namespace
+        self.index = self.pc.Index(index_name)
         self.max_retries = 3
         self.retry_delay = 1  # seconds
 
@@ -35,7 +50,10 @@ class SearchClient:
             lambda: self.pc.inference.embed(
                 model=os.getenv("PINECONE_EMBEDDING_MODEL"),
                 inputs=[text],
-                parameters={"input_type": "passage", "truncate": "END"}
+                parameters={
+                    "input_type": "passage", 
+                    "truncate": "END"
+                }
             )
         )
         return embeddings.data[0].values
@@ -53,18 +71,32 @@ class SearchClient:
 
     async def search(self, query: str, top_k: int = 10) -> Dict:
         # Get embeddings
+        logger.info(f"Generating embeddings for query: {query}")
+        logger.info(f"Using embedding model: {os.getenv('PINECONE_EMBEDDING_MODEL')}")
         query_embedding = await self.embed_query(query)
         
-        # Vector search with retry - get top_k results
+        # Vector search with namespace
+        logger.info(f"Performing vector search with top_k={top_k} in namespace='nvidia-blog'")
         vector_results = await self._retry_operation(
             lambda: self.index.query(
                 vector=query_embedding,
                 top_k=top_k,
-                include_metadata=True
+                include_metadata=True,
+                namespace="nvidia-blog"  # Only need namespace here for index operations
             )
         )
+        
+        # Log raw results
+        logger.info("Search results:")
+        for i, match in enumerate(vector_results.matches):
+            logger.info(f"Result {i+1}:")
+            logger.info(f"ID: {match.id}")
+            logger.info(f"Score: {match.score}")
+            logger.info(f"Text: {match.metadata.get('text', 'No text')[:200]}...")
+            logger.info(f"Title: {match.metadata.get('title', 'No title')}")
+            logger.info("---")
 
-        # Convert vector results to serializable format
+        # Convert to serializable format
         vector_matches = [
             {
                 "id": match.id,
@@ -74,13 +106,8 @@ class SearchClient:
             for match in vector_results.matches
         ]
 
-        # Only take top 3 for vector results to be sent to LLM
-        vector_for_llm = vector_matches[:3]
-        
-        # Rerank all results but only return top 3
+        # Get reranked results
         reranked = await self.rerank_results(query, vector_results.matches, top_k=3)
-        
-        # Convert reranked results to serializable format
         reranked_matches = [
             {
                 "id": match.id,
@@ -91,8 +118,8 @@ class SearchClient:
         ]
 
         return {
-            "vector_results": vector_for_llm,  # Only top 3 for LLM
-            "reranked_results": reranked_matches,
-            "all_vector_results": vector_matches,  # Keep all results for UI if needed
+            "vector_results": vector_matches[:3],  # Top 3 for LLM
+            "reranked_results": reranked_matches,  # Top 3 reranked for LLM
+            "all_vector_results": vector_matches,  # ALL vector results
             "latency": float(vector_results.latency) if vector_results.latency is not None else 0.0
         } 

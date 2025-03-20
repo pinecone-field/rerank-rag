@@ -8,6 +8,8 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
+  const [vectorResults, setVectorResults] = useState<any[]>([])
+  const [rerankedResults, setRerankedResults] = useState<any[]>([])
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -17,7 +19,6 @@ export default function Home() {
     const message = inputValue
     setInputValue('')
     
-    // Add user message
     const newMessages = [...messages, { role: 'user' as const, content: message }]
     setMessages(newMessages)
 
@@ -28,12 +29,17 @@ export default function Home() {
         body: JSON.stringify({ message })
       })
       
-      const data: ChatResponse = await response.json()
+      const data = await response.json()
+      console.log('Full API response:', data) // Debug log
+      
+      // Make sure we're getting ALL results
+      setVectorResults(data.all_vector_results || [])
+      setRerankedResults(data.reranked_results || [])
       
       setMessages([
         ...newMessages,
-        { role: 'assistant' as const, content: data.vectorResponse },
-        { role: 'assistant' as const, content: data.rerankedResponse }
+        { role: 'assistant', content: data.vectorResponse },
+        { role: 'assistant', content: data.rerankedResponse }
       ])
     } catch (error) {
       console.error('Chat error:', error)
@@ -60,12 +66,14 @@ export default function Home() {
             messages={messages}
             loading={loading}
             side="left"
+            searchResults={vectorResults}
           />
           <ChatInterface
             title="Similarity + Rerank"
             messages={messages}
             loading={loading}
             side="right"
+            searchResults={rerankedResults}
           />
         </div>
 

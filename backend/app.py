@@ -6,6 +6,9 @@ import logging
 import os
 from search import SearchClient
 from openai import AsyncOpenAI
+import dotenv
+
+dotenv.load_dotenv("../.env.local")    
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -39,7 +42,9 @@ async def search(request: SearchRequest):
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     try:
+        logger.info(f"Received chat request: {request.message}")
         search_results = await search_client.search(request.message, request.top_k)
+        logger.info(f"Search results: {search_results}")
         
         # First define the context formatting function and create contexts
         def format_context(results):
@@ -50,6 +55,12 @@ async def chat(request: ChatRequest):
         
         vector_context = format_context(search_results["vector_results"])
         rerank_context = format_context(search_results["reranked_results"])
+        
+        # Log contexts being sent to LLM
+        logger.info("Vector context being sent to LLM:")
+        logger.info(vector_context)
+        logger.info("Rerank context being sent to LLM:")
+        logger.info(rerank_context)
         
         # Then define the shared instructions and prompts
         shared_instructions = """
@@ -127,9 +138,14 @@ async def chat(request: ChatRequest):
             max_tokens=500
         )
         
+        # Log the full results structure
+        logger.info(f"Full search results structure: {search_results}")
+        
         return {
             "vectorResponse": vector_response.choices[0].message.content,
-            "rerankedResponse": rerank_response.choices[0].message.content
+            "rerankedResponse": rerank_response.choices[0].message.content,
+            "all_vector_results": search_results["all_vector_results"],
+            "reranked_results": search_results["reranked_results"]
         }
         
     except Exception as e:
