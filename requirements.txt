@@ -14,7 +14,7 @@ diskcache==5.6.3
 docker-pycreds==0.4.0
 emoji==2.14.1
 fastapi==0.110.0
-filelock==3.17.0
+filelock==3.20.3
 Flask==3.1.0
 frozenlist==1.5.0
 fsspec==2025.3.0
